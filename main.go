@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -136,6 +137,45 @@ func (vr *VideoReader) readThread() {
 	vr.lock.Unlock()
 }
 
+type socketServer struct {
+	connections map[net.Conn]bool
+	lock        sync.Locker
+	listener    net.Listener
+}
+
+func newSocketServer() *socketServer {
+	return &socketServer{
+		connections: make(map[net.Conn]bool),
+		lock:        new(sync.Mutex),
+	}
+}
+
+func (s *socketServer) serve(port string) error {
+	ln, err := net.Listen("tcp", port)
+	if err != nil {
+		return err
+	}
+
+	s.listener = ln
+
+	go func() {
+		defer ln.Close()
+
+		for {
+			conn, err := s.listener.Accept()
+			if err != nil {
+				return
+			}
+
+			s.lock.Lock()
+			s.connections[conn] = true
+			s.lock.Unlock()
+		}
+	}()
+
+	return nil
+}
+
 func main() {
 	log.Printf("looking up raspivid path")
 	raspividPath, err := exec.LookPath(rapsividExec)
@@ -162,6 +202,13 @@ func main() {
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
+
+	processEnded := make(chan bool)
+
+	go func() {
+		cmd.Wait()
+		processEnded <- true
+	}()
 
 	log.Printf("opening named pipes for reading")
 
@@ -190,9 +237,19 @@ func main() {
 	defer motionReader.Close()
 	defer rawReader.Close()
 
-	<-interrupted
+	killProcess := true
+	select {
+	case <-interrupted:
+		break
+	case <-processEnded:
+		killProcess = false
+		break
+	}
+
 	fmt.Println("Closing")
 
-	cmd.Process.Signal(os.Interrupt)
-	cmd.Wait()
+	if killProcess {
+		cmd.Process.Signal(os.Interrupt)
+		cmd.Wait()
+	}
 }
