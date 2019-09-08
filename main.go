@@ -137,14 +137,17 @@ func (vr *VideoReader) readThread() {
 }
 
 func main() {
+	log.Printf("looking up raspivid path")
 	raspividPath, err := exec.LookPath(rapsividExec)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	log.Printf("handling interrupt")
 	interrupted := make(chan os.Signal)
 	signal.Notify(interrupted, os.Interrupt)
 
+	log.Printf("creating named pipes")
 	for _, f := range []string{videoFile, rawFile, motionFile} {
 		err := syscall.Mkfifo(f, 0660)
 		if err != nil {
@@ -154,7 +157,7 @@ func main() {
 		defer os.Remove(f)
 	}
 
-	// open pipes
+	log.Printf("opening named pipes for reading")
 	videoPipe, err := os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
 	if err != nil {
 		log.Fatalf("could not open video file '%s': %v", videoFile, err)
@@ -168,6 +171,7 @@ func main() {
 		log.Fatalf("could not open motion file '%s': %v", motionFile, err)
 	}
 
+	log.Printf("starting readers")
 	motionReader := NewNullReader(motionPipe)
 	rawReader := NewNullReader(rawPipe)
 	videoReader := NewVideoReader(videoPipe)
@@ -176,6 +180,7 @@ func main() {
 	defer motionReader.Close()
 	defer rawReader.Close()
 
+	log.Printf("starting raspivid")
 	// exec the raspivid command
 	cmd := exec.Command(raspividPath)
 	if err := cmd.Start(); err != nil {
