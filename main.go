@@ -164,14 +164,18 @@ func main() {
 	}
 
 	log.Printf("opening named pipes for reading")
+
+	log.Printf("opening video...")
 	videoPipe, err := os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
 	if err != nil {
 		log.Fatalf("could not open video file '%s': %v", videoFile, err)
 	}
+	log.Printf("opening raw...")
 	rawPipe, err := os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
 	if err != nil {
 		log.Fatalf("could not open raw file '%s': %v", rawFile, err)
 	}
+	log.Printf("opening motion...")
 	motionPipe, err := os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
 	if err != nil {
 		log.Fatalf("could not open motion file '%s': %v", motionFile, err)
