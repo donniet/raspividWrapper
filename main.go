@@ -23,7 +23,7 @@ var (
 
 	defaultBufferSize = 4096
 
-	raspividCommandLine = "%s -o \"%s\" -x \"%s\" -r \"%s\" -w %d -h %d -rf rgb "
+	raspividCommandLine = "\"%s\" -o \"%s\" -x \"%s\" -r \"%s\" -w %d -h %d -rf rgb"
 )
 
 type NullReader struct {
@@ -143,10 +143,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("handling interrupt")
-	interrupted := make(chan os.Signal)
-	signal.Notify(interrupted, os.Interrupt)
-
 	log.Printf("creating named pipes")
 	for _, f := range []string{videoFile, rawFile, motionFile} {
 		err := syscall.Mkfifo(f, 0660)
@@ -155,6 +151,16 @@ func main() {
 		}
 
 		defer os.Remove(f)
+	}
+
+	log.Printf("handling interrupt")
+	interrupted := make(chan os.Signal)
+	signal.Notify(interrupted, os.Interrupt)
+
+	log.Printf("starting raspivid")
+	cmd := exec.Command(raspividPath, "-o", videoFile, "-r", rawFile, "-x", motionFile, "-w", fmt.Sprintf("%d", width), "-h", fmt.Sprintf("%d", height), "-rf", "rgb")
+	if err := cmd.Start(); err != nil {
+		log.Fatal(err)
 	}
 
 	log.Printf("opening named pipes for reading")
@@ -179,13 +185,6 @@ func main() {
 	defer videoReader.Close()
 	defer motionReader.Close()
 	defer rawReader.Close()
-
-	log.Printf("starting raspivid")
-	// exec the raspivid command
-	cmd := exec.Command(raspividPath)
-	if err := cmd.Start(); err != nil {
-		log.Fatal(err)
-	}
 
 	<-interrupted
 	fmt.Println("Closing")
