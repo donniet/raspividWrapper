@@ -236,6 +236,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not open raw file '%s': %v", rawFile, err)
 		}
+		counter <- true
 		log.Printf("opened raw.")
 	}()
 	go func() {
@@ -245,10 +246,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not open motion file '%s': %v", motionFile, err)
 		}
+		counter <- true
 		log.Printf("opened motion")
 	}()
 
-	timeout := time.NewTimer(100 * time.Millisecond)
+	timeout := time.NewTimer(10000 * time.Millisecond)
 	for c := 0; c < 3; {
 		select {
 		case <-counter:
