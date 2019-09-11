@@ -221,6 +221,7 @@ func main() {
 
 	go func() {
 		var err error
+		log.Printf("trying to open video")
 		videoPipe, err = os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
 		if err != nil {
 			log.Fatalf("could not open video file '%s': %v", videoFile, err)
@@ -229,6 +230,7 @@ func main() {
 		log.Printf("video opened")
 	}()
 	go func() {
+		log.Printf("trying to open raw")
 		var err error
 		rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
 		if err != nil {
@@ -237,6 +239,7 @@ func main() {
 		log.Printf("opened raw.")
 	}()
 	go func() {
+		log.Printf("trying to open motion")
 		var err error
 		motionPipe, err = os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
 		if err != nil {
