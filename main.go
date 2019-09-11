@@ -54,90 +54,6 @@ func NewNullReader(r io.ReadCloser) (ret *NullReader) {
 	return
 }
 
-type VideoReader struct {
-	listeners map[io.WriteCloser]bool
-	videoPipe io.ReadCloser
-	lock      sync.Locker
-	bufsize   int
-}
-
-func NewVideoReader(r io.ReadCloser) (ret *VideoReader) {
-	ret = &VideoReader{
-		listeners: make(map[io.WriteCloser]bool),
-		videoPipe: r,
-		lock:      new(sync.Mutex),
-		bufsize:   defaultBufferSize,
-	}
-	go ret.readThread()
-	return
-}
-
-func (vr *VideoReader) Close() {
-	vr.videoPipe.Close()
-}
-
-func (vr *VideoReader) AddListener(w io.WriteCloser) {
-	vr.lock.Lock()
-	defer vr.lock.Unlock()
-
-	vr.listeners[w] = true
-}
-
-func (vr *VideoReader) RemoveListener(w io.WriteCloser) {
-	vr.lock.Lock()
-	defer vr.lock.Unlock()
-
-	delete(vr.listeners, w)
-}
-
-func (vr *VideoReader) readThread() {
-	buf := make([]byte, vr.bufsize)
-
-	for {
-		n, err := vr.videoPipe.Read(buf)
-
-		if err != nil {
-			log.Print(err)
-			break
-		}
-
-		var toClose []io.WriteCloser
-		var toWrite []io.WriteCloser
-
-		vr.lock.Lock()
-		for w := range vr.listeners {
-			toWrite = append(toWrite, w)
-		}
-		vr.lock.Unlock()
-
-		for _, w := range toWrite {
-			n0 := 0
-			for n0 < n {
-				n1, err := w.Write(buf[n0:n])
-				if err != nil {
-					toClose = append(toClose, w)
-					break
-				}
-				n0 += n1
-			}
-		}
-
-		vr.lock.Lock()
-		for _, w := range toClose {
-			w.Close() // ignore error
-			delete(vr.listeners, w)
-		}
-		vr.lock.Unlock()
-	}
-
-	vr.lock.Lock()
-	for w := range vr.listeners {
-		w.Close()
-		delete(vr.listeners, w)
-	}
-	vr.lock.Unlock()
-}
-
 type socketServer struct {
 	connections map[net.Conn]bool
 	lock        sync.Locker
@@ -194,7 +110,8 @@ func (s *socketServer) Write(b []byte) (int, error) {
 	for _, c := range conns {
 		n := 0
 		for n < len(b) {
-			n0, err := c.Write(b)
+			log.Printf("writing to %s", c.RemoteAddr())
+			n0, err := c.Write(b[n:])
 			if err != nil {
 				log.Printf("removing connection %s", c.RemoteAddr())
 				toRemove[c] = true
