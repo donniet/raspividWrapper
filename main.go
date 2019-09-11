@@ -232,7 +232,7 @@ func main() {
 	signal.Notify(interrupted, os.Interrupt)
 
 	log.Printf("starting raspivid")
-	cmd := exec.Command(raspividPath, "-o", videoFile, "-r", rawFile, "-x", motionFile, "-w", fmt.Sprintf("%d", width), "-h", fmt.Sprintf("%d", height), "-rf", "rgb")
+	cmd := exec.Command(raspividPath, "-t", "0", "-o", videoFile, "-r", rawFile, "-x", motionFile, "-w", fmt.Sprintf("%d", width), "-h", fmt.Sprintf("%d", height), "-rf", "rgb")
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
