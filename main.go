@@ -177,6 +177,39 @@ func (s *socketServer) serve(port string) error {
 	return nil
 }
 
+// this multiplexing is happening in two places-- in the reader and here.  I don't know which is the best place...
+func (s *socketServer) Write(b []byte) (int, error) {
+	// maybe make this asynchronous?
+
+	var conns []net.Conn
+	s.lock.Lock()
+	for c := range s.connections {
+		conns = append(conns, c)
+	}
+	s.lock.Unlock()
+
+	toRemove := make(map[net.Conn]bool)
+	for _, c := range conns {
+		n := 0
+		for n < len(b) {
+			n0, err := c.Write(b)
+			if err != nil {
+				toRemove[c] = true
+				c.Close()
+				break
+			}
+			n += n0
+		}
+	}
+
+	s.lock.Lock()
+	for c := range toRemove {
+		delete(s.connections, c)
+	}
+	s.lock.Unlock()
+	return len(b), nil
+}
+
 func main() {
 	log.Printf("looking up raspivid path")
 	raspividPath, err := exec.LookPath(rapsividExec)
@@ -263,9 +296,24 @@ func main() {
 	log.Printf("starting readers")
 	motionReader := NewNullReader(motionPipe)
 	rawReader := NewNullReader(rawPipe)
-	videoReader := NewVideoReader(videoPipe)
 
-	defer videoReader.Close()
+	sock := newSocketServer()
+	sock.serve(":3000")
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := videoPipe.Read(buf)
+			if err != nil {
+				break
+			}
+			sock.Write(buf[:n])
+		}
+	}()
+
+	// videoReader := NewVideoReader(videoPipe)
+
+	// defer videoReader.Close()
 	defer motionReader.Close()
 	defer rawReader.Close()
 
