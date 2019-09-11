@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var (
@@ -212,20 +213,46 @@ func main() {
 
 	log.Printf("opening named pipes for reading")
 
-	log.Printf("opening video...")
-	videoPipe, err := os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
-	if err != nil {
-		log.Fatalf("could not open video file '%s': %v", videoFile, err)
-	}
-	log.Printf("opening raw...")
-	rawPipe, err := os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
-	if err != nil {
-		log.Fatalf("could not open raw file '%s': %v", rawFile, err)
-	}
-	log.Printf("opening motion...")
-	motionPipe, err := os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
-	if err != nil {
-		log.Fatalf("could not open motion file '%s': %v", motionFile, err)
+	// we don't know the order that raspivid will open the files, and so we'll open these in gofuncs
+
+	var videoPipe, rawPipe, motionPipe *os.File
+
+	counter := make(chan bool)
+
+	go func() {
+		var err error
+		videoPipe, err = os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
+		if err != nil {
+			log.Fatalf("could not open video file '%s': %v", videoFile, err)
+		}
+		counter <- true
+		log.Printf("video opened")
+	}()
+	go func() {
+		var err error
+		rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
+		if err != nil {
+			log.Fatalf("could not open raw file '%s': %v", rawFile, err)
+		}
+		log.Printf("opened raw.")
+	}()
+	go func() {
+		var err error
+		motionPipe, err = os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
+		if err != nil {
+			log.Fatalf("could not open motion file '%s': %v", motionFile, err)
+		}
+		log.Printf("opened motion")
+	}()
+
+	timeout := time.NewTimer(100 * time.Millisecond)
+	for c := 0; c < 3; {
+		select {
+		case <-counter:
+			c++
+		case <-timeout.C:
+			log.Fatal("did not open the video, motion and raw files fast enough")
+		}
 	}
 
 	log.Printf("starting readers")
