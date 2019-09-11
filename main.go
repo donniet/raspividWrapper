@@ -168,6 +168,8 @@ func (s *socketServer) serve(port string) error {
 				return
 			}
 
+			log.Printf("accepted connection %s", conn.RemoteAddr())
+
 			s.lock.Lock()
 			s.connections[conn] = true
 			s.lock.Unlock()
@@ -194,6 +196,7 @@ func (s *socketServer) Write(b []byte) (int, error) {
 		for n < len(b) {
 			n0, err := c.Write(b)
 			if err != nil {
+				log.Printf("removing connection %s", c.RemoteAddr())
 				toRemove[c] = true
 				c.Close()
 				break
