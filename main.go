@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -17,18 +18,42 @@ var (
 	rawFile    = "raw_fifo"
 	motionFile = "motion_fifo"
 
-	rapsividExec = "raspivid"
+	raspividExec = "raspivid"
 
 	videoPort = ":3000"
 
-	width        = 1920
-	height       = 1080
-	bitrate      = 10000000
+	width        = 1640
+	height       = 1232
+	bitrate      = 17000000
 	framerate    = 25
 	keyFrameRate = 12
+	analogGain   = 4.0
+	digitalGain  = 1.0
+	refreshType  = "both"
+	h264Level    = "4.2"
+	h264Profile  = "main"
 
 	defaultBufferSize = 2048
 )
+
+func init() {
+	flag.StringVar(&rawFile, "raw", rawFile, "raw video fifo path to be created - do not name this an existing file name!")
+	flag.StringVar(&motionFile, "motion", motionFile, "motion vectors fifo path to be created - do not name this an existing file name!")
+	flag.StringVar(&raspividExec, "raspivid", raspividExec, "name of raspivid executable to be located in your PATH")
+	flag.StringVar(&videoPort, "vidaddr", videoPort, "address to listen for video connections")
+	flag.IntVar(&width, "width", width, "width of video")
+	flag.IntVar(&width, "w", width, "width of video")
+	flag.IntVar(&height, "height", height, "height of video")
+	flag.IntVar(&height, "h", height, "height of video")
+	flag.IntVar(&bitrate, "bitrate", bitrate, "bitrate of h264 video")
+	flag.IntVar(&framerate, "fps", framerate, "framerate requested from raspivid")
+	flag.IntVar(&keyFrameRate, "keyfps", keyFrameRate, "key frame rate of h264 video")
+	flag.Float64Var(&analogGain, "ag", analogGain, "analog gain sent to raspivid")
+	flag.Float64Var(&digitalGain, "dg", digitalGain, "digital gain sent to raspivid")
+	flag.StringVar(&refreshType, "refreshType", refreshType, "intra refresh type (cyclic, adaptive, both, cyclicrows)")
+	flag.StringVar(&h264Level, "h264level", h264Level, "h264 encoder level (4, 4.1, 4.2)")
+	flag.StringVar(&h264Profile, "h264profile", h264Profile, "h264 encoder profile (baseline, main, high)")
+}
 
 type NullReader struct {
 	r io.ReadCloser
@@ -140,8 +165,10 @@ func (s *socketServer) Write(b []byte) (int, error) {
 }
 
 func main() {
+	flag.Parse()
+
 	log.Printf("looking up raspivid path")
-	raspividPath, err := exec.LookPath(rapsividExec)
+	raspividPath, err := exec.LookPath(raspividExec)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -166,14 +193,21 @@ func main() {
 		"-b", fmt.Sprintf("%d", bitrate),
 		"-o", "-",
 		"-fps", fmt.Sprintf("%d", framerate),
+		"-rf", "rgb",
 		"-r", rawFile,
 		"-x", motionFile,
 		"-w", fmt.Sprintf("%d", width),
 		"-h", fmt.Sprintf("%d", height),
 		"-stm",
 		"-ih",
+		"-ag", fmt.Sprintf("%f", analogGain),
+		"-dg", fmt.Sprintf("%f", digitalGain),
 		"-g", fmt.Sprintf("%d", keyFrameRate),
-		"-rf", "rgb")
+		"-if", refreshType,
+		"-ih",
+		"-lev", h264Level,
+		"-pf", h264Profile,
+	)
 
 	videoPipe, err := cmd.StdoutPipe()
 	if err != nil {
