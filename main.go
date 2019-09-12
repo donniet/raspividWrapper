@@ -333,7 +333,7 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("frame.jpg", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/frame.jpg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
 		if err := jpeg.Encode(w, rawReader.Frame(), nil); err != nil {
 			log.Printf("error encoding frame: %v", err)
