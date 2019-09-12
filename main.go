@@ -186,13 +186,13 @@ func main() {
 
 	var rawPipe, motionPipe *os.File
 
-	rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
-	if err != nil {
-		log.Fatalf("could not open raw file '%s': %v", rawFile, err)
-	}
 	motionPipe, err = os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
 	if err != nil {
 		log.Fatalf("could not open motion file '%s': %v", motionFile, err)
+	}
+	rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
+	if err != nil {
+		log.Fatalf("could not open raw file '%s': %v", rawFile, err)
 	}
 
 	log.Printf("starting readers")
