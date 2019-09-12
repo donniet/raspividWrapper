@@ -89,8 +89,8 @@ func (rr *RawVideoReader) Close() {
 }
 
 func (rr *RawVideoReader) readThread() {
+	buf := make([]byte, rr.width*rr.height*rr.channels)
 	for {
-		buf := make([]byte, rr.width*rr.height*rr.channels)
 		_, err := io.ReadFull(rr.reader, buf)
 
 		if err != nil {
