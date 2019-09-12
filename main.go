@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"image"
 	"io"
 	"log"
 	"net"
@@ -53,6 +54,58 @@ func init() {
 	flag.StringVar(&refreshType, "refreshType", refreshType, "intra refresh type (cyclic, adaptive, both, cyclicrows)")
 	flag.StringVar(&h264Level, "h264level", h264Level, "h264 encoder level (4, 4.1, 4.2)")
 	flag.StringVar(&h264Profile, "h264profile", h264Profile, "h264 encoder profile (baseline, main, high)")
+}
+
+type RawVideoReader struct {
+	width    int
+	height   int
+	channels int
+
+	frame  []byte
+	reader io.ReadCloser
+	lock   sync.Locker
+}
+
+func NewRawVideoReader(width int, height int, channels int, reader io.ReadCloser) *RawVideoReader {
+	ret := &RawVideoReader{
+		width:    width,
+		height:   height,
+		channels: channels,
+		reader:   reader,
+		lock:     new(sync.Mutex),
+	}
+	go ret.readThread()
+	return ret
+}
+
+func (rr *RawVideoReader) Close() {
+	rr.reader.Close()
+}
+
+func (rr *RawVideoReader) readThread() {
+	for {
+		buf := make([]byte, rr.width*rr.height*rr.channels)
+		_, err := io.ReadFull(rr.reader, buf)
+
+		if err != nil {
+			break
+		}
+
+		rr.lock.Lock()
+		rr.frame = buf
+		rr.lock.Unlock()
+	}
+}
+
+func (rr *RawVideoReader) Frame() image.Image {
+	rr.lock.Lock()
+	defer rr.lock.Unlock()
+
+	if rr.frame == nil {
+		return nil
+	}
+
+	return FromRaw(rr.frame, rr.width*rr.channels)
 }
 
 type NullReader struct {
@@ -257,7 +310,7 @@ func main() {
 
 	log.Printf("starting readers")
 	motionReader := NewNullReader(motionPipe)
-	rawReader := NewNullReader(rawPipe)
+	rawReader := NewRawVideoReader(width, height, 3, rawPipe)
 
 	sock := newSocketServer()
 	sock.serve(videoPort)
