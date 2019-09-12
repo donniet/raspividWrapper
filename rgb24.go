@@ -76,7 +76,7 @@ func FromRaw(b []byte, stride int) *RGB24 {
 	ret := &RGB24{
 		Pix:    b,
 		Stride: stride,
-		Rect:   image.Rect(0, 0, stride/3, len(b)/stride/3),
+		Rect:   image.Rect(0, 0, stride/3, len(b)/stride),
 	}
 
 	log.Printf("FromRaw, len: %d, stride: %d, width: %d, height: %d", len(b), stride, ret.Bounds().Dx(), ret.Bounds().Dy())
