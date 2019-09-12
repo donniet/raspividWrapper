@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net"
@@ -62,23 +66,84 @@ func init() {
 
 }
 
+type MotionVectorReader struct {
+	Width  int
+	Height int
+	Mbx    int
+	Mby    int
+	reader io.ReadCloser
+	buffer []motionVector
+	lock   sync.Locker
+}
+
+type motionVector struct {
+	X   int8
+	Y   int8
+	Sad int16
+}
+
+// math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+func NewMotionVectorReader(width int, height int, reader io.ReadCloser) *MotionVectorReader {
+	ret := &MotionVectorReader{
+		Width:  width,
+		Height: height,
+		Mbx:    1 + (width+15)/16,
+		Mby:    1 + height/16,
+		reader: reader,
+		lock:   new(sync.Mutex),
+	}
+	go ret.thread()
+	return ret
+}
+
+func (m *MotionVectorReader) thread() {
+	len := m.Mbx * m.Mby
+	vect := make([]motionVector, 2*len)
+
+	i := 0
+	for {
+		if err := binary.Read(m.reader, binary.LittleEndian, vect[i*len:(i+1)*len]); err != nil {
+			log.Print(err)
+			break
+		}
+
+		m.lock.Lock()
+		m.buffer = vect[i*len : (i+1)*len]
+		m.lock.Unlock()
+
+		i = (i + 1) % 2
+	}
+}
+
+func (m *MotionVectorReader) Close() {
+	m.reader.Close()
+}
+
+func (m *MotionVectorReader) MotionVectors() []motionVector {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	ret := make([]motionVector, len(m.buffer))
+	copy(ret, m.buffer)
+
+	return ret
+}
+
 type RawVideoReader struct {
-	width    int
-	height   int
-	channels int
+	stride int
+	rows   int
 
 	frame  []byte
 	reader io.ReadCloser
 	lock   sync.Locker
 }
 
-func NewRawVideoReader(width int, height int, channels int, reader io.ReadCloser) *RawVideoReader {
+func NewRawVideoReader(stride int, rows int, reader io.ReadCloser) *RawVideoReader {
 	ret := &RawVideoReader{
-		width:    width,
-		height:   height,
-		channels: channels,
-		reader:   reader,
-		lock:     new(sync.Mutex),
+		stride: stride,
+		rows:   rows,
+		reader: reader,
+		lock:   new(sync.Mutex),
 	}
 	go ret.readThread()
 	return ret
@@ -89,17 +154,23 @@ func (rr *RawVideoReader) Close() {
 }
 
 func (rr *RawVideoReader) readThread() {
-	buf := make([]byte, rr.width*rr.height*rr.channels)
+	bufsize := rr.stride * rr.rows
+	// double buffer
+	buf := make([]byte, 2*bufsize)
+
+	i := 0
 	for {
-		_, err := io.ReadFull(rr.reader, buf)
+		_, err := io.ReadFull(rr.reader, buf[i*bufsize:(i+1)*bufsize])
 
 		if err != nil {
 			break
 		}
 
 		rr.lock.Lock()
-		rr.frame = buf
+		rr.frame = buf[i*bufsize : (i+1)*bufsize]
 		rr.lock.Unlock()
+
+		i = (i + 1) % 2
 	}
 }
 
@@ -111,7 +182,10 @@ func (rr *RawVideoReader) Frame() image.Image {
 		return nil
 	}
 
-	return FromRaw(rr.frame, rr.width*rr.channels)
+	f := make([]byte, len(rr.frame))
+	copy(f, rr.frame)
+
+	return FromRaw(f, rr.stride)
 }
 
 type NullReader struct {
@@ -315,8 +389,11 @@ func main() {
 	}
 
 	log.Printf("starting readers")
-	motionReader := NewNullReader(motionPipe)
-	rawReader := NewRawVideoReader(width, height, 3, rawPipe)
+	motionReader := NewMotionVectorReader(width, height, motionPipe)
+	rawReader := NewRawVideoReader(3*width, height, rawPipe)
+
+	defer motionReader.Close()
+	defer rawReader.Close()
 
 	sock := newSocketServer()
 	sock.serve(videoPort)
@@ -333,11 +410,60 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/frame.jpg", func(w http.ResponseWriter, r *http.Request) {
+	serveJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
 		if err := jpeg.Encode(w, rawReader.Frame(), nil); err != nil {
 			log.Printf("error encoding frame: %v", err)
 		}
+	})
+	mux.Handle("/frame.jpg", serveJPEG)
+	mux.Handle("/frame.jpeg", serveJPEG)
+	mux.HandleFunc("/frame.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "image/png")
+		if err := png.Encode(w, rawReader.Frame()); err != nil {
+			log.Printf("error encoding frame: %v", err)
+		}
+	})
+	mux.HandleFunc("/frame.rgb", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/octet-stream")
+		frame := rawReader.Frame()
+		rgb := frame.(*RGB24)
+		w.Header().Add("X-Image-Stride", fmt.Sprintf("%d", rgb.Stride))
+		w.Header().Add("X-Image-Rows", fmt.Sprintf("%d", len(rgb.Pix)/rgb.Stride))
+
+		n, err := io.Copy(w, bytes.NewReader(rgb.Pix))
+		if err != nil {
+			log.Printf("error writing raw image: %v", err)
+		} else if n < int64(len(rgb.Pix)) {
+			log.Printf("only %d bytes written out of %d", n, len(rgb.Pix))
+		}
+	})
+	mux.HandleFunc("/motion.bin", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/octet-stream")
+		vectors := motionReader.MotionVectors()
+		binary.Write(w, binary.LittleEndian, vectors)
+	})
+	mux.HandleFunc("/config.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/json")
+
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "\t")
+		enc.Encode(map[string]interface{}{
+			"videoAddr":    videoPort,
+			"restAddr":     restAddr,
+			"width":        width,
+			"height":       height,
+			"bitrate":      bitrate,
+			"framerate":    framerate,
+			"keyFrameRate": keyFrameRate,
+			"analogGain":   analogGain,
+			"digitalGain":  digitalGain,
+			"refreshType":  refreshType,
+			"h264Level":    h264Level,
+			"h264Profile":  h264Profile,
+			"mbx":          motionReader.Mbx,
+			"mby":          motionReader.Mby,
+		})
 	})
 	server := &http.Server{
 		Addr:    restAddr,
@@ -349,12 +475,6 @@ func main() {
 			log.Fatal(err)
 		}
 	}()
-
-	// videoReader := NewVideoReader(videoPipe)
-
-	// defer videoReader.Close()
-	defer motionReader.Close()
-	defer rawReader.Close()
 
 	killProcess := true
 	select {
