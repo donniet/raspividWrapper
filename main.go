@@ -158,6 +158,8 @@ func (rr *RawVideoReader) readThread() {
 	// double buffer
 	buf := make([]byte, 2*bufsize)
 
+	log.Printf("rawvideo bufsize: %d", bufsize)
+
 	i := 0
 	for {
 		_, err := io.ReadFull(rr.reader, buf[i*bufsize:(i+1)*bufsize])
@@ -181,6 +183,8 @@ func (rr *RawVideoReader) Frame() image.Image {
 	if rr.frame == nil {
 		return nil
 	}
+
+	log.Printf("length of frame: %d", len(rr.frame))
 
 	f := make([]byte, len(rr.frame))
 	copy(f, rr.frame)
