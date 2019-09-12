@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -178,6 +179,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("error getting stdout: %v", err)
 	}
+
+	videoErrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("error getting stderr: %v", err)
+	}
+	go func() {
+		r := bufio.NewReader(videoErrPipe)
+		for {
+			ln, err := r.ReadBytes('\n')
+			if err != nil {
+				break
+			}
+			log.Printf("raspivid: %s", ln)
+		}
+	}()
 
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
