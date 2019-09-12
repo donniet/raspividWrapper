@@ -131,17 +131,17 @@ func (m *MotionVectorReader) MotionVectors() []motionVector {
 
 type RawVideoReader struct {
 	stride int
-	rows   int
+	cols   int
 
 	frame  []byte
 	reader io.ReadCloser
 	lock   sync.Locker
 }
 
-func NewRawVideoReader(stride int, rows int, reader io.ReadCloser) *RawVideoReader {
+func NewRawVideoReader(stride int, cols int, reader io.ReadCloser) *RawVideoReader {
 	ret := &RawVideoReader{
 		stride: stride,
-		rows:   rows,
+		cols:   cols,
 		reader: reader,
 		lock:   new(sync.Mutex),
 	}
@@ -154,7 +154,7 @@ func (rr *RawVideoReader) Close() {
 }
 
 func (rr *RawVideoReader) readThread() {
-	bufsize := rr.stride * rr.rows
+	bufsize := rr.stride * rr.cols
 	// double buffer
 	buf := make([]byte, 2*bufsize)
 
@@ -390,7 +390,7 @@ func main() {
 
 	log.Printf("starting readers")
 	motionReader := NewMotionVectorReader(width, height, motionPipe)
-	rawReader := NewRawVideoReader(3*width, height, rawPipe)
+	rawReader := NewRawVideoReader(3*height, width, rawPipe)
 
 	defer motionReader.Close()
 	defer rawReader.Close()
