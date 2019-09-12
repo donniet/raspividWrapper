@@ -55,20 +55,24 @@ func NewNullReader(r io.ReadCloser) (ret *NullReader) {
 }
 
 type socketServer struct {
-	connections map[net.Conn]bool
+	connections map[*net.TCPConn]bool
 	lock        sync.Locker
-	listener    net.Listener
+	listener    *net.TCPListener
 }
 
 func newSocketServer() *socketServer {
 	return &socketServer{
-		connections: make(map[net.Conn]bool),
+		connections: make(map[*net.TCPConn]bool),
 		lock:        new(sync.Mutex),
 	}
 }
 
 func (s *socketServer) serve(port string) error {
-	ln, err := net.Listen("tcp", port)
+	addr, err := net.ResolveTCPAddr("tcp", port)
+	if err != nil {
+		log.Fatal("addr invalid tcp: '%s': %v", addr, err)
+	}
+	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -79,11 +83,14 @@ func (s *socketServer) serve(port string) error {
 		defer ln.Close()
 
 		for {
-			conn, err := s.listener.Accept()
+			conn, err := s.listener.AcceptTCP()
 			if err != nil {
 				return
 			}
-
+			if err := conn.SetKeepAlive(true); err != nil {
+				log.Printf("error setting keepalive: %v", err)
+				// continue
+			}
 			log.Printf("accepted connection %s", conn.RemoteAddr())
 
 			s.lock.Lock()
@@ -99,14 +106,14 @@ func (s *socketServer) serve(port string) error {
 func (s *socketServer) Write(b []byte) (int, error) {
 	// maybe make this asynchronous?
 
-	var conns []net.Conn
+	var conns []*net.TCPConn
 	s.lock.Lock()
 	for c := range s.connections {
 		conns = append(conns, c)
 	}
 	s.lock.Unlock()
 
-	toRemove := make(map[net.Conn]bool)
+	toRemove := make(map[*net.TCPConn]bool)
 	for _, c := range conns {
 		n := 0
 		for n < len(b) {
