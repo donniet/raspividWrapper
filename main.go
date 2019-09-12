@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,6 +25,7 @@ var (
 	raspividExec = "raspivid"
 
 	videoPort = ":3000"
+	restAddr  = ":8888"
 
 	width        = 1640
 	height       = 1232
@@ -54,6 +58,8 @@ func init() {
 	flag.StringVar(&refreshType, "refreshType", refreshType, "intra refresh type (cyclic, adaptive, both, cyclicrows)")
 	flag.StringVar(&h264Level, "h264level", h264Level, "h264 encoder level (4, 4.1, 4.2)")
 	flag.StringVar(&h264Profile, "h264profile", h264Profile, "h264 encoder profile (baseline, main, high)")
+	flag.StringVar(&restAddr, "restaddr", restAddr, "address of rest interface")
+
 }
 
 type RawVideoReader struct {
@@ -323,6 +329,24 @@ func main() {
 				break
 			}
 			sock.Write(buf[:n])
+		}
+	}()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("frame.jpg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "image/jpeg")
+		if err := jpeg.Encode(w, rawReader.Frame(), nil); err != nil {
+			log.Printf("error encoding frame: %v", err)
+		}
+	})
+	server := &http.Server{
+		Addr:    restAddr,
+		Handler: mux,
+	}
+	defer server.Shutdown(context.Background())
+	go func() {
+		if err := server.ListenAndServe(); err != nil {
+			log.Fatal(err)
 		}
 	}()
 
