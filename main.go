@@ -20,8 +20,10 @@ var (
 
 	rapsividExec = "raspivid"
 
-	width  = 1920
-	height = 1080
+	width     = 1920
+	height    = 1080
+	bitrate   = 10000000
+	framerate = 25
 
 	defaultBufferSize = 4096
 
@@ -110,7 +112,7 @@ func (s *socketServer) Write(b []byte) (int, error) {
 	for _, c := range conns {
 		n := 0
 		for n < len(b) {
-			log.Printf("writing to %s", c.RemoteAddr())
+			// log.Printf("writing to %s", c.RemoteAddr())
 			n0, err := c.Write(b[n:])
 			if err != nil {
 				log.Printf("removing connection %s", c.RemoteAddr())
@@ -152,7 +154,18 @@ func main() {
 	signal.Notify(interrupted, os.Interrupt)
 
 	log.Printf("starting raspivid")
-	cmd := exec.Command(raspividPath, "-t", "0", "-o", videoFile, "-r", rawFile, "-x", motionFile, "-w", fmt.Sprintf("%d", width), "-h", fmt.Sprintf("%d", height), "-rf", "rgb")
+	cmd := exec.Command(raspividPath,
+		"-t", "0",
+		"-b", fmt.Sprintf("%d", bitrate),
+		"-o", videoFile,
+		"-fps", fmt.Sprintf("%d", framerate),
+		"-r", rawFile,
+		"-x", motionFile,
+		"-w", fmt.Sprintf("%d", width),
+		"-h", fmt.Sprintf("%d", height),
+		"-stm",
+		"-rf", "rgb")
+
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
