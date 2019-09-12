@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"log"
 )
 
 /*
@@ -71,11 +72,15 @@ func FromImage(img image.Image) *RGB24 {
 FromRaw constructs an RGB24 image from raw bytes in RGB-row major order
 */
 func FromRaw(b []byte, stride int) *RGB24 {
-	return &RGB24{
+
+	ret := &RGB24{
 		Pix:    b,
 		Stride: stride,
 		Rect:   image.Rect(0, 0, stride/3, len(b)/stride/3),
 	}
+
+	log.Printf("FromRaw, len: %d, stride: %d, width: %d, height: %d", len(b), stride, ret.Bounds().Dx(), ret.Bounds().Dy())
+	return ret
 }
 
 /*
