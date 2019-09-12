@@ -115,7 +115,7 @@ func (s *socketServer) Write(b []byte) (int, error) {
 			// log.Printf("writing to %s", c.RemoteAddr())
 			n0, err := c.Write(b[n:])
 			if err != nil {
-				log.Printf("removing connection %s", c.RemoteAddr())
+				log.Printf("removing connection %s err: %v", c.RemoteAddr(), err)
 				toRemove[c] = true
 				c.Close()
 				break
