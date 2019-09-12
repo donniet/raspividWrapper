@@ -25,7 +25,7 @@ var (
 	bitrate   = 10000000
 	framerate = 25
 
-	defaultBufferSize = 4096
+	defaultBufferSize = 2048
 
 	raspividCommandLine = "\"%s\" -o \"%s\" -x \"%s\" -r \"%s\" -w %d -h %d -rf rgb"
 )
