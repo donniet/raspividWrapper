@@ -131,17 +131,17 @@ func (m *MotionVectorReader) MotionVectors() []motionVector {
 
 type RawVideoReader struct {
 	stride int
-	cols   int
+	rows   int
 
 	frame  []byte
 	reader io.ReadCloser
 	lock   sync.Locker
 }
 
-func NewRawVideoReader(stride int, cols int, reader io.ReadCloser) *RawVideoReader {
+func NewRawVideoReader(stride int, rows int, reader io.ReadCloser) *RawVideoReader {
 	ret := &RawVideoReader{
 		stride: stride,
-		cols:   cols,
+		rows:   rows,
 		reader: reader,
 		lock:   new(sync.Mutex),
 	}
@@ -154,7 +154,7 @@ func (rr *RawVideoReader) Close() {
 }
 
 func (rr *RawVideoReader) readThread() {
-	bufsize := rr.stride * rr.cols
+	bufsize := rr.stride * rr.rows
 	// double buffer
 	buf := make([]byte, 2*bufsize)
 
@@ -390,7 +390,7 @@ func main() {
 
 	log.Printf("starting readers")
 	motionReader := NewMotionVectorReader(width, height, motionPipe)
-	rawReader := NewRawVideoReader(3*height, width, rawPipe)
+	rawReader := NewRawVideoReader(3*width, height, rawPipe)
 
 	defer motionReader.Close()
 	defer rawReader.Close()
@@ -412,7 +412,9 @@ func main() {
 	mux := http.NewServeMux()
 	serveJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
-		if err := jpeg.Encode(w, rawReader.Frame(), nil); err != nil {
+		frame := rawReader.Frame()
+		log.Printf("frame size: %v", frame.Bounds())
+		if err := jpeg.Encode(w, frame, nil); err != nil {
 			log.Printf("error encoding frame: %v", err)
 		}
 	})
