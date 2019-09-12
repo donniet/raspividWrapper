@@ -10,15 +10,15 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 )
 
 var (
-	videoFile  = "video_fifo"
 	rawFile    = "raw_fifo"
 	motionFile = "motion_fifo"
 
 	rapsividExec = "raspivid"
+
+	videoPort = ":3000"
 
 	width     = 1920
 	height    = 1080
@@ -26,8 +26,6 @@ var (
 	framerate = 25
 
 	defaultBufferSize = 2048
-
-	raspividCommandLine = "\"%s\" -o \"%s\" -x \"%s\" -r \"%s\" -w %d -h %d -rf rgb"
 )
 
 type NullReader struct {
@@ -114,7 +112,7 @@ func (s *socketServer) Write(b []byte) (int, error) {
 		for n < len(b) {
 			// log.Printf("writing to %s", c.RemoteAddr())
 			n0, err := c.Write(b[n:])
-			if err != nil {
+			if err != nil || n0 == 0 {
 				log.Printf("removing connection %s err: %v", c.RemoteAddr(), err)
 				toRemove[c] = true
 				c.Close()
@@ -140,7 +138,7 @@ func main() {
 	}
 
 	log.Printf("creating named pipes")
-	for _, f := range []string{videoFile, rawFile, motionFile} {
+	for _, f := range []string{rawFile, motionFile} {
 		err := syscall.Mkfifo(f, 0660)
 		if err != nil {
 			log.Fatal(err)
@@ -157,7 +155,7 @@ func main() {
 	cmd := exec.Command(raspividPath,
 		"-t", "0",
 		"-b", fmt.Sprintf("%d", bitrate),
-		"-o", videoFile,
+		"-o", "-",
 		"-fps", fmt.Sprintf("%d", framerate),
 		"-r", rawFile,
 		"-x", motionFile,
@@ -165,6 +163,11 @@ func main() {
 		"-h", fmt.Sprintf("%d", height),
 		"-stm",
 		"-rf", "rgb")
+
+	videoPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatalf("error getting stdout: %v", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
@@ -181,49 +184,15 @@ func main() {
 
 	// we don't know the order that raspivid will open the files, and so we'll open these in gofuncs
 
-	var videoPipe, rawPipe, motionPipe *os.File
+	var rawPipe, motionPipe *os.File
 
-	counter := make(chan bool)
-
-	go func() {
-		var err error
-		log.Printf("trying to open video")
-		videoPipe, err = os.OpenFile(videoFile, os.O_CREATE, os.ModeNamedPipe)
-		if err != nil {
-			log.Fatalf("could not open video file '%s': %v", videoFile, err)
-		}
-		counter <- true
-		log.Printf("video opened")
-	}()
-	go func() {
-		log.Printf("trying to open raw")
-		var err error
-		rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
-		if err != nil {
-			log.Fatalf("could not open raw file '%s': %v", rawFile, err)
-		}
-		counter <- true
-		log.Printf("opened raw.")
-	}()
-	go func() {
-		log.Printf("trying to open motion")
-		var err error
-		motionPipe, err = os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
-		if err != nil {
-			log.Fatalf("could not open motion file '%s': %v", motionFile, err)
-		}
-		counter <- true
-		log.Printf("opened motion")
-	}()
-
-	timeout := time.NewTimer(10000 * time.Millisecond)
-	for c := 0; c < 3; {
-		select {
-		case <-counter:
-			c++
-		case <-timeout.C:
-			log.Fatal("did not open the video, motion and raw files fast enough")
-		}
+	rawPipe, err = os.OpenFile(rawFile, os.O_CREATE, os.ModeNamedPipe)
+	if err != nil {
+		log.Fatalf("could not open raw file '%s': %v", rawFile, err)
+	}
+	motionPipe, err = os.OpenFile(motionFile, os.O_CREATE, os.ModeNamedPipe)
+	if err != nil {
+		log.Fatalf("could not open motion file '%s': %v", motionFile, err)
 	}
 
 	log.Printf("starting readers")
@@ -231,10 +200,10 @@ func main() {
 	rawReader := NewNullReader(rawPipe)
 
 	sock := newSocketServer()
-	sock.serve(":3000")
+	sock.serve(videoPort)
 
 	go func() {
-		buf := make([]byte, 4096)
+		buf := make([]byte, defaultBufferSize)
 		for {
 			n, err := videoPipe.Read(buf)
 			if err != nil {
