@@ -20,10 +20,11 @@ var (
 
 	videoPort = ":3000"
 
-	width     = 1920
-	height    = 1080
-	bitrate   = 10000000
-	framerate = 25
+	width        = 1920
+	height       = 1080
+	bitrate      = 10000000
+	framerate    = 25
+	keyFrameRate = 12
 
 	defaultBufferSize = 2048
 )
@@ -169,6 +170,8 @@ func main() {
 		"-w", fmt.Sprintf("%d", width),
 		"-h", fmt.Sprintf("%d", height),
 		"-stm",
+		"-ih",
+		"-g", fmt.Sprintf("%d", keyFrameRate),
 		"-rf", "rgb")
 
 	videoPipe, err := cmd.StdoutPipe()
