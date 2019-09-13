@@ -396,7 +396,11 @@ func main() {
 
 	log.Printf("starting readers")
 	motionReader := NewMotionVectorReader(width, height, motionPipe)
-	rawReader := NewRawVideoReader(3*width, height, rawPipe)
+	stride := 3 * width
+	if r := stride % 16; r != 0 {
+		stride += 3 * r
+	}
+	rawReader := NewRawVideoReader(stride, width, height, rawPipe)
 
 	defer motionReader.Close()
 	defer rawReader.Close()
