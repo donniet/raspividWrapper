@@ -139,6 +139,13 @@ type RawVideoReader struct {
 }
 
 func NewRawVideoReader(stride int, rows int, reader io.ReadCloser) *RawVideoReader {
+	if r := stride % 16; r != 0 {
+		stride += r * 3
+	}
+	if r := rows % 16; r != 0 {
+		rows += r
+	}
+
 	ret := &RawVideoReader{
 		stride: stride,
 		rows:   rows,
