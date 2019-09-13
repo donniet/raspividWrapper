@@ -1,0 +1,13 @@
+[Unit]
+Description=raspividWrapper
+After=network.target
+
+[Service]
+ExecStart=/home/pi/go/bin/raspividWrapper -ag 12 -dg 3 --raw /tmp/raw_video_fifo --motion /tmp/motion_fifo --h264profile high
+Restart=always
+User=pi
+Group=pi
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
