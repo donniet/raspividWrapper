@@ -131,6 +131,7 @@ func (m *MotionVectorReader) MotionVectors() []motionVector {
 
 type RawVideoReader struct {
 	stride int
+	cols   int
 	rows   int
 
 	frame  []byte
@@ -138,16 +139,10 @@ type RawVideoReader struct {
 	lock   sync.Locker
 }
 
-func NewRawVideoReader(stride int, rows int, reader io.ReadCloser) *RawVideoReader {
-	if r := stride % 16; r != 0 {
-		stride += r * 3
-	}
-	if r := rows % 16; r != 0 {
-		rows += r
-	}
-
+func NewRawVideoReader(stride int, cols int, rows int, reader io.ReadCloser) *RawVideoReader {
 	ret := &RawVideoReader{
 		stride: stride,
+		cols:   cols,
 		rows:   rows,
 		reader: reader,
 		lock:   new(sync.Mutex),
@@ -196,7 +191,7 @@ func (rr *RawVideoReader) Frame() image.Image {
 	f := make([]byte, len(rr.frame))
 	copy(f, rr.frame)
 
-	return FromRaw(f, rr.stride)
+	return FromRaw(f, rr.stride, rr.cols, rr.rows)
 }
 
 type NullReader struct {
