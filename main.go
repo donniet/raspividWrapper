@@ -20,6 +20,10 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/donniet/raspividWrapper/videoService"
+	empty "github.com/golang/protobuf/ptypes/empty"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -30,6 +34,7 @@ var (
 
 	videoPort = ":3000"
 	restAddr  = ":8888"
+	grpcAddr  = ":5555"
 
 	width        = 1640
 	height       = 1232
@@ -41,6 +46,7 @@ var (
 	refreshType  = "both"
 	h264Level    = "4.2"
 	h264Profile  = "main"
+	jpegQuality  = 85
 
 	defaultBufferSize = 2048
 )
@@ -66,6 +72,91 @@ func init() {
 
 }
 
+type VideoServerGRPC struct {
+	MotionReader *MotionVectorReader
+	VideoReader  *RawVideoReader
+}
+
+func (v *VideoServerGRPC) MotionRaw(_ *empty.Empty, rawServer videoService.Video_MotionRawServer) error {
+	for {
+		vects, err := v.MotionReader.WaitNextMotionVectors()
+
+		if err != nil {
+			break
+		}
+
+		buf := new(bytes.Buffer)
+		if err := binary.Write(buf, binary.LittleEndian, vects); err != nil {
+			log.Fatalf("error writing vectors to binary: %v", err)
+		}
+
+		rawServer.Send(&videoService.Frame{Data: buf.Bytes()})
+	}
+
+	return nil
+}
+
+func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video_VideoJPEGServer) error {
+	for {
+		frame, err := v.VideoReader.WaitNextFrame()
+
+		if err != nil {
+			break
+		}
+
+		// should probably use a cached version of the jpeg
+		buf := new(bytes.Buffer)
+		if err := jpeg.Encode(buf, frame, &jpeg.Options{Quality: jpegQuality}); err != nil {
+			// probably shouldn't be fatal
+			log.Fatalf("error encoding JPEG to buffer: %v", err)
+		}
+
+		rawServer.Send(&videoService.Frame{Data: buf.Bytes()})
+	}
+
+	return nil
+}
+
+func (v *VideoServerGRPC) VideoRaw(_ *empty.Empty, rawServer videoService.Video_VideoRawServer) error {
+	for {
+		frame, err := v.VideoReader.WaitNextFrame()
+
+		if err != nil {
+			break
+		}
+
+		rgb, ok := frame.(*RGB24)
+		if !ok {
+			log.Fatal("image is not RGB24")
+		}
+
+		rawServer.Send(&videoService.Frame{Data: rgb.Pix})
+	}
+
+	return nil
+}
+
+func (v *VideoServerGRPC) MetaData(ctx context.Context, _ *empty.Empty) (*videoService.VideoMetaData, error) {
+	return &videoService.VideoMetaData{
+		Size: &videoService.Rectangle{
+			X: int32(width),
+			Y: int32(height),
+		},
+		MacroBlocks: &videoService.Rectangle{
+			X: int32(1 + (width+15)/16),
+			Y: int32(1 + height/16),
+		},
+		BitRate:      int32(bitrate),
+		FrameRate:    int32(framerate),
+		KeyFrameRate: int32(keyFrameRate),
+		AnalogGain:   float32(analogGain),
+		DigitalGain:  float32(digitalGain),
+		RefreshType:  refreshType,
+		H264Level:    h264Level,
+		H264Profile:  h264Profile,
+	}, nil
+}
+
 type MotionVectorReader struct {
 	Width  int
 	Height int
@@ -74,6 +165,8 @@ type MotionVectorReader struct {
 	reader io.ReadCloser
 	buffer []motionVector
 	lock   sync.Locker
+	ready  *sync.Cond
+	done   bool
 }
 
 type motionVector struct {
@@ -84,13 +177,17 @@ type motionVector struct {
 
 // math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
 func NewMotionVectorReader(width int, height int, reader io.ReadCloser) *MotionVectorReader {
+	l := new(sync.Mutex)
+
 	ret := &MotionVectorReader{
 		Width:  width,
 		Height: height,
 		Mbx:    1 + (width+15)/16,
 		Mby:    1 + height/16,
 		reader: reader,
-		lock:   new(sync.Mutex),
+		lock:   l,
+		ready:  sync.NewCond(l),
+		done:   false,
 	}
 	go ret.thread()
 	return ret
@@ -111,12 +208,44 @@ func (m *MotionVectorReader) thread() {
 		m.buffer = vect[i*len : (i+1)*len]
 		m.lock.Unlock()
 
+		m.ready.Broadcast()
+
 		i = (i + 1) % 2
 	}
+
+	m.lock.Lock()
+	m.done = true
+	m.lock.Unlock()
+
+	m.ready.Broadcast()
 }
 
 func (m *MotionVectorReader) Close() {
 	m.reader.Close()
+}
+
+/*
+WaitNextMotionVectors waits for the next set of motion vectors then returns them or an error if there are no more
+*/
+func (m *MotionVectorReader) WaitNextMotionVectors() ([]motionVector, error) {
+	eof := fmt.Errorf("completed thread")
+	if m.Done() {
+		return nil, eof
+	}
+
+	m.ready.Wait()
+
+	if m.Done() {
+		return nil, eof
+	}
+	return m.MotionVectors(), nil
+}
+
+func (m *MotionVectorReader) Done() bool {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.done
 }
 
 func (m *MotionVectorReader) MotionVectors() []motionVector {
@@ -137,18 +266,30 @@ type RawVideoReader struct {
 	frame  []byte
 	reader io.ReadCloser
 	lock   sync.Locker
+	ready  *sync.Cond
+	done   bool
 }
 
 func NewRawVideoReader(stride int, cols int, rows int, reader io.ReadCloser) *RawVideoReader {
+	l := new(sync.Mutex)
 	ret := &RawVideoReader{
 		stride: stride,
 		cols:   cols,
 		rows:   rows,
 		reader: reader,
-		lock:   new(sync.Mutex),
+		lock:   l,
+		ready:  sync.NewCond(l),
+		done:   false,
 	}
 	go ret.readThread()
 	return ret
+}
+
+func (rr *RawVideoReader) Done() bool {
+	rr.lock.Lock()
+	defer rr.lock.Unlock()
+
+	return rr.done
 }
 
 func (rr *RawVideoReader) Close() {
@@ -174,8 +315,32 @@ func (rr *RawVideoReader) readThread() {
 		rr.frame = buf[i*bufsize : (i+1)*bufsize]
 		rr.lock.Unlock()
 
+		rr.ready.Broadcast()
+
 		i = (i + 1) % 2
 	}
+
+	rr.lock.Lock()
+	rr.done = true
+	rr.lock.Unlock()
+
+	rr.ready.Broadcast()
+}
+
+func (rr *RawVideoReader) WaitNextFrame() (image.Image, error) {
+	eof := fmt.Errorf("video completed")
+
+	if rr.Done() {
+		return nil, eof
+	}
+
+	rr.ready.Wait()
+
+	if rr.Done() {
+		return nil, eof
+	}
+
+	return rr.Frame(), nil
 }
 
 func (rr *RawVideoReader) Frame() image.Image {
@@ -373,10 +538,15 @@ func main() {
 	}
 
 	processEnded := make(chan bool)
-
 	go func() {
 		cmd.Wait()
-		processEnded <- true
+		close(processEnded)
+	}()
+	defer func() {
+		if !cmd.ProcessState.Exited() {
+			cmd.Process.Signal(os.Interrupt)
+			cmd.Wait()
+		}
 	}()
 
 	log.Printf("opening named pipes for reading")
@@ -441,7 +611,8 @@ func main() {
 		frame := rawReader.Frame()
 		rgb := frame.(*RGB24)
 		w.Header().Add("X-Image-Stride", fmt.Sprintf("%d", rgb.Stride))
-		w.Header().Add("X-Image-Rows", fmt.Sprintf("%d", len(rgb.Pix)/rgb.Stride))
+		w.Header().Add("X-Image-Rows", fmt.Sprintf("%d", rgb.Rect.Dy()))
+		w.Header().Add("X-Image-Cols", fmt.Sprintf("%d", rgb.Rect.Dx()))
 
 		n, err := io.Copy(w, bytes.NewReader(rgb.Pix))
 		if err != nil {
@@ -488,19 +659,30 @@ func main() {
 		}
 	}()
 
-	killProcess := true
+	grpcServer := &VideoServerGRPC{
+		MotionReader: motionReader,
+		VideoReader:  rawReader,
+	}
+
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	s := grpc.NewServer()
+	videoService.RegisterVideoServer(s, grpcServer)
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+	defer s.GracefulStop()
+
 	select {
 	case <-interrupted:
 		break
 	case <-processEnded:
-		killProcess = false
 		break
 	}
 
 	fmt.Println("Closing")
-
-	if killProcess {
-		cmd.Process.Signal(os.Interrupt)
-		cmd.Wait()
-	}
 }

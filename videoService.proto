@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+message Rectangle {
+    int32 X = 1;
+    int32 Y = 2;
+}
+
+message VideoMetaData {
+    Rectangle Size = 1;
+    Rectangle MacroBlocks = 2;
+    int32 BitRate = 3;
+    int32 FrameRate = 4;
+    int32 KeyFrameRate = 5;
+    float AnalogGain = 6;
+    float DigitalGain = 7;
+    string RefreshType = 8;
+    string H264Level = 9;
+    string H264Profile = 10;
+}
+
+message Frame {
+    bytes Data = 1;
+}
+
+service Video {
+    rpc MetaData(google.protobuf.Empty) returns (VideoMetaData);
+    rpc VideoRaw(google.protobuf.Empty) returns (stream Frame);
+    rpc VideoJPEG(google.protobuf.Empty) returns (stream Frame);
+    rpc MotionRaw(google.protobuf.Empty) returns (stream Frame);
+}
+
+
