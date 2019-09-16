@@ -69,6 +69,7 @@ func init() {
 	flag.StringVar(&h264Level, "h264level", h264Level, "h264 encoder level (4, 4.1, 4.2)")
 	flag.StringVar(&h264Profile, "h264profile", h264Profile, "h264 encoder profile (baseline, main, high)")
 	flag.StringVar(&restAddr, "restaddr", restAddr, "address of rest interface")
+	flag.StringVar(&grpcAddr, "grpcaddr", grpcAddr, "address of GRPC interface")
 
 }
 
