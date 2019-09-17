@@ -672,6 +672,7 @@ func main() {
 	s := grpc.NewServer()
 	videoService.RegisterVideoServer(s, grpcServer)
 	go func() {
+		log.Printf("starting GRPC server on '%s'", grpcAddr)
 		if err := s.Serve(lis); err != nil {
 			log.Fatalf("failed to serve: %v", err)
 		}
