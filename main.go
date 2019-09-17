@@ -230,16 +230,19 @@ WaitNextMotionVectors waits for the next set of motion vectors then returns them
 */
 func (m *MotionVectorReader) WaitNextMotionVectors() ([]motionVector, error) {
 	eof := fmt.Errorf("completed thread")
-	if m.Done() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if m.done {
 		return nil, eof
 	}
-
 	m.ready.Wait()
-
-	if m.Done() {
+	if m.done {
 		return nil, eof
 	}
-	return m.MotionVectors(), nil
+	ret := make([]motionVector, len(m.buffer))
+	copy(ret, m.buffer)
+	return ret, nil
 }
 
 func (m *MotionVectorReader) Done() bool {
@@ -330,18 +333,21 @@ func (rr *RawVideoReader) readThread() {
 
 func (rr *RawVideoReader) WaitNextFrame() (image.Image, error) {
 	eof := fmt.Errorf("video completed")
+	rr.lock.Lock()
+	defer rr.lock.Unlock()
 
-	if rr.Done() {
+	if rr.done {
 		return nil, eof
 	}
-
 	rr.ready.Wait()
-
-	if rr.Done() {
+	if rr.done {
 		return nil, eof
 	}
 
-	return rr.Frame(), nil
+	f := make([]byte, len(rr.frame))
+	copy(f, rr.frame)
+
+	return FromRaw(f, rr.stride, rr.cols, rr.rows), nil
 }
 
 func (rr *RawVideoReader) Frame() image.Image {
