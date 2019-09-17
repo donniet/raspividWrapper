@@ -518,6 +518,7 @@ func main() {
 		"-ih",
 		"-lev", h264Level,
 		"-pf", h264Profile,
+		"-n",
 	)
 
 	videoPipe, err := cmd.StdoutPipe()
