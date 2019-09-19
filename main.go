@@ -509,7 +509,7 @@ func main() {
 		// wrap in anon func for scope for the defer
 		err := syscall.Mkfifo(f, 0660)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("WARNING: '%s': %v", f, err)
 		}
 
 		defer func(f string) {
