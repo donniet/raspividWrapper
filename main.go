@@ -512,7 +512,11 @@ func main() {
 			log.Fatal(err)
 		}
 
-		defer func(f string) { os.Remove(f) }(f)
+		defer func(f string) {
+			if err := os.Remove(f); err != nil {
+				log.Printf("error removing '%s': %v", f, err)
+			}
+		}(f)
 	}
 
 	log.Printf("handling interrupt")
