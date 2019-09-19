@@ -506,12 +506,15 @@ func main() {
 
 	log.Printf("creating named pipes")
 	for _, f := range []string{rawFile, motionFile} {
-		err := syscall.Mkfifo(f, 0660)
-		if err != nil {
-			log.Fatal(err)
-		}
+		// wrap in anon func for scope for the defer
+		func(file string) {
+			err := syscall.Mkfifo(file, 0660)
+			if err != nil {
+				log.Fatal(err)
+			}
 
-		defer os.Remove(f)
+			defer os.Remove(file)
+		}(f)
 	}
 
 	log.Printf("handling interrupt")
