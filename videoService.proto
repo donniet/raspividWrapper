@@ -26,7 +26,9 @@ message Frame {
 
 service Video {
     rpc MetaData(google.protobuf.Empty) returns (VideoMetaData);
+    rpc FrameRaw(google.protobuf.Empty) returns (Frame);
     rpc VideoRaw(google.protobuf.Empty) returns (stream Frame);
+    rpc FrameJPEG(google.protobuf.Empty) returns (Frame);
     rpc VideoJPEG(google.protobuf.Empty) returns (stream Frame);
     rpc MotionRaw(google.protobuf.Empty) returns (stream Frame);
 }

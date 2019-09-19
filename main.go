@@ -97,11 +97,23 @@ func (v *VideoServerGRPC) MotionRaw(_ *empty.Empty, rawServer videoService.Video
 	return nil
 }
 
-func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video_VideoJPEGServer) error {
-	for {
-		frame, err := v.VideoReader.WaitNextFrame()
+func (v *VideoServerGRPC) FrameJPEG(ctx context.Context, _ *empty.Empty) (*videoService.Frame, error) {
+	frame := v.VideoReader.Frame()
 
-		if err != nil {
+	buf := new(bytes.Buffer)
+	if err := jpeg.Encode(buf, frame, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		log.Fatalf("error encoding JPEG to buffer: %v", err)
+	}
+
+	return &videoService.Frame{Data: buf.Bytes()}, nil
+}
+
+func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video_VideoJPEGServer) (err error) {
+	for {
+		frame, err2 := v.VideoReader.WaitNextFrame()
+
+		if err2 != nil {
+			err = err2
 			break
 		}
 
@@ -116,6 +128,14 @@ func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video
 	}
 
 	return nil
+}
+
+func (v *VideoServerGRPC) FrameRaw(ctx context.Context, _ *empty.Empty) (*videoService.Frame, error) {
+	frame := v.VideoReader.Frame()
+
+	rgb := frame.(*RGB24)
+
+	return &videoService.Frame{Data: rgb.Pix}, nil
 }
 
 func (v *VideoServerGRPC) VideoRaw(_ *empty.Empty, rawServer videoService.Video_VideoRawServer) error {
