@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -73,11 +72,17 @@ func init() {
 
 }
 
+/*
+VideoServerGRPC is a GRPC server for frames and motion vectors
+*/
 type VideoServerGRPC struct {
 	MotionReader *MotionVectorReader
 	VideoReader  *RawVideoReader
 }
 
+/*
+MotionRaw streams byte arras of the raw motion vectors via GRPC
+*/
 func (v *VideoServerGRPC) MotionRaw(_ *empty.Empty, rawServer videoService.Video_MotionRawServer) error {
 	for {
 		vects, err := v.MotionReader.WaitNextMotionVectors()
@@ -97,6 +102,9 @@ func (v *VideoServerGRPC) MotionRaw(_ *empty.Empty, rawServer videoService.Video
 	return nil
 }
 
+/*
+FrameJPEG returns the byte array of a JPEG of a single frame
+*/
 func (v *VideoServerGRPC) FrameJPEG(ctx context.Context, _ *empty.Empty) (*videoService.Frame, error) {
 	frame := v.VideoReader.Frame()
 
@@ -108,6 +116,9 @@ func (v *VideoServerGRPC) FrameJPEG(ctx context.Context, _ *empty.Empty) (*video
 	return &videoService.Frame{Data: buf.Bytes()}, nil
 }
 
+/*
+VideoJPEG streams byte arrays of JPEGs of frames from the video
+*/
 func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video_VideoJPEGServer) (err error) {
 	for {
 		frame, err2 := v.VideoReader.WaitNextFrame()
@@ -130,25 +141,24 @@ func (v *VideoServerGRPC) VideoJPEG(_ *empty.Empty, rawServer videoService.Video
 	return nil
 }
 
+/*
+FrameRaw returns the raw RGB24 (w,h,c) of the current frame
+*/
 func (v *VideoServerGRPC) FrameRaw(ctx context.Context, _ *empty.Empty) (*videoService.Frame, error) {
-	frame := v.VideoReader.Frame()
-
-	rgb := frame.(*RGB24)
+	rgb := v.VideoReader.Frame()
 
 	return &videoService.Frame{Data: rgb.Pix}, nil
 }
 
+/*
+VideoRaw streams the raw RGB24 (w,h,c) as byte arrays
+*/
 func (v *VideoServerGRPC) VideoRaw(_ *empty.Empty, rawServer videoService.Video_VideoRawServer) error {
 	for {
-		frame, err := v.VideoReader.WaitNextFrame()
+		rgb, err := v.VideoReader.WaitNextFrame()
 
 		if err != nil {
 			break
-		}
-
-		rgb, ok := frame.(*RGB24)
-		if !ok {
-			log.Fatal("image is not RGB24")
 		}
 
 		rawServer.Send(&videoService.Frame{Data: rgb.Pix})
@@ -157,6 +167,9 @@ func (v *VideoServerGRPC) VideoRaw(_ *empty.Empty, rawServer videoService.Video_
 	return nil
 }
 
+/*
+MetaData returns the settings of the video and motion vectors via GRPC
+*/
 func (v *VideoServerGRPC) MetaData(ctx context.Context, _ *empty.Empty) (*videoService.VideoMetaData, error) {
 	return &videoService.VideoMetaData{
 		Size: &videoService.Rectangle{
@@ -178,25 +191,35 @@ func (v *VideoServerGRPC) MetaData(ctx context.Context, _ *empty.Empty) (*videoS
 	}, nil
 }
 
+/*
+MotionVectorReader reads the raw motion vectors into a motionVector array
+*/
 type MotionVectorReader struct {
 	Width  int
 	Height int
 	Mbx    int
 	Mby    int
 	reader io.ReadCloser
-	buffer []motionVector
+	buffer []MotionVector
 	lock   sync.Locker
 	ready  *sync.Cond
 	done   bool
 }
 
-type motionVector struct {
+/*
+MotionVector represents a single motion vector on a superblock, and is a binary compatible format
+*/
+type MotionVector struct {
 	X   int8
 	Y   int8
 	Sad int16
 }
 
-// math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+/*
+NewMotionVectorReader creates a new motion vector reader and begins reading from the reader
+
+math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+*/
 func NewMotionVectorReader(width int, height int, reader io.ReadCloser) *MotionVectorReader {
 	l := new(sync.Mutex)
 
@@ -216,7 +239,7 @@ func NewMotionVectorReader(width int, height int, reader io.ReadCloser) *MotionV
 
 func (m *MotionVectorReader) thread() {
 	len := m.Mbx * m.Mby
-	vect := make([]motionVector, 2*len)
+	vect := make([]MotionVector, 2*len)
 
 	i := 0
 	for {
@@ -241,6 +264,9 @@ func (m *MotionVectorReader) thread() {
 	m.ready.Broadcast()
 }
 
+/*
+Close shuts down the reader and background gofunc
+*/
 func (m *MotionVectorReader) Close() {
 	m.reader.Close()
 }
@@ -248,7 +274,7 @@ func (m *MotionVectorReader) Close() {
 /*
 WaitNextMotionVectors waits for the next set of motion vectors then returns them or an error if there are no more
 */
-func (m *MotionVectorReader) WaitNextMotionVectors() ([]motionVector, error) {
+func (m *MotionVectorReader) WaitNextMotionVectors() ([]MotionVector, error) {
 	eof := fmt.Errorf("completed thread")
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -260,11 +286,14 @@ func (m *MotionVectorReader) WaitNextMotionVectors() ([]motionVector, error) {
 	if m.done {
 		return nil, eof
 	}
-	ret := make([]motionVector, len(m.buffer))
+	ret := make([]MotionVector, len(m.buffer))
 	copy(ret, m.buffer)
 	return ret, nil
 }
 
+/*
+Done returns true of the reader has been shutdown
+*/
 func (m *MotionVectorReader) Done() bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -272,16 +301,22 @@ func (m *MotionVectorReader) Done() bool {
 	return m.done
 }
 
-func (m *MotionVectorReader) MotionVectors() []motionVector {
+/*
+MotionVectors gets the most recent motion vectors from the buffer
+*/
+func (m *MotionVectorReader) MotionVectors() []MotionVector {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	ret := make([]motionVector, len(m.buffer))
+	ret := make([]MotionVector, len(m.buffer))
 	copy(ret, m.buffer)
 
 	return ret
 }
 
+/*
+RawVideoReader is a buffer for the RGB24 video bytes
+*/
 type RawVideoReader struct {
 	stride int
 	cols   int
@@ -294,6 +329,9 @@ type RawVideoReader struct {
 	done   bool
 }
 
+/*
+NewRawVideoReader creates a new reader from the stride, cols and rows and a ReadCloser and starts reading data in a gofunc
+*/
 func NewRawVideoReader(stride int, cols int, rows int, reader io.ReadCloser) *RawVideoReader {
 	l := new(sync.Mutex)
 	ret := &RawVideoReader{
@@ -309,6 +347,9 @@ func NewRawVideoReader(stride int, cols int, rows int, reader io.ReadCloser) *Ra
 	return ret
 }
 
+/*
+Done returns true if the reader has been closed
+*/
 func (rr *RawVideoReader) Done() bool {
 	rr.lock.Lock()
 	defer rr.lock.Unlock()
@@ -316,6 +357,9 @@ func (rr *RawVideoReader) Done() bool {
 	return rr.done
 }
 
+/*
+Close stops the thread and closes the wrapped ReadCloser
+*/
 func (rr *RawVideoReader) Close() {
 	rr.reader.Close()
 }
@@ -351,7 +395,10 @@ func (rr *RawVideoReader) readThread() {
 	rr.ready.Broadcast()
 }
 
-func (rr *RawVideoReader) WaitNextFrame() (image.Image, error) {
+/*
+WaitNextFrame will block until the next frame is received from the reader and return that frame and an error if closed
+*/
+func (rr *RawVideoReader) WaitNextFrame() (*RGB24, error) {
 	eof := fmt.Errorf("video completed")
 	rr.lock.Lock()
 	defer rr.lock.Unlock()
@@ -370,7 +417,10 @@ func (rr *RawVideoReader) WaitNextFrame() (image.Image, error) {
 	return FromRaw(f, rr.stride, rr.cols, rr.rows), nil
 }
 
-func (rr *RawVideoReader) Frame() image.Image {
+/*
+Frame returns the current frame in the buffer
+*/
+func (rr *RawVideoReader) Frame() *RGB24 {
 	rr.lock.Lock()
 	defer rr.lock.Unlock()
 
@@ -386,6 +436,9 @@ func (rr *RawVideoReader) Frame() image.Image {
 	return FromRaw(f, rr.stride, rr.cols, rr.rows)
 }
 
+/*
+NullReader reads and throws away the data from the wrapped reader
+*/
 type NullReader struct {
 	r io.ReadCloser
 }
@@ -402,10 +455,16 @@ func (dr *NullReader) readThread() {
 	}
 }
 
+/*
+Close closes the wrapped reader
+*/
 func (dr *NullReader) Close() {
 	dr.r.Close()
 }
 
+/*
+NewNullReader creates a NullReader which wrapps the passed ReadCloser
+*/
 func NewNullReader(r io.ReadCloser) (ret *NullReader) {
 	ret = &NullReader{r}
 	go ret.readThread()
@@ -428,7 +487,7 @@ func newSocketServer() *socketServer {
 func (s *socketServer) serve(port string) error {
 	addr, err := net.ResolveTCPAddr("tcp", port)
 	if err != nil {
-		log.Fatal("addr invalid tcp: '%s': %v", addr, err)
+		log.Fatalf("addr invalid tcp: '%s': %v", addr, err)
 	}
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
@@ -641,8 +700,7 @@ func main() {
 	})
 	mux.HandleFunc("/frame.rgb", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/octet-stream")
-		frame := rawReader.Frame()
-		rgb := frame.(*RGB24)
+		rgb := rawReader.Frame()
 		w.Header().Add("X-Image-Stride", fmt.Sprintf("%d", rgb.Stride))
 		w.Header().Add("X-Image-Rows", fmt.Sprintf("%d", rgb.Rect.Dy()))
 		w.Header().Add("X-Image-Cols", fmt.Sprintf("%d", rgb.Rect.Dx()))

@@ -24,7 +24,7 @@ type RGB struct {
 /*
 RGBModel is the color model for a 24-bit image
 */
-var RGBModel color.Model = color.ModelFunc(func(c color.Color) color.Color {
+var RGBModel = color.ModelFunc(func(c color.Color) color.Color {
 	r, g, b, _ := c.RGBA()
 	return RGB{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)}
 })
