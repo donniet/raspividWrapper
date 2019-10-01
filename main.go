@@ -693,15 +693,8 @@ func main() {
 			log.Printf("error encoding frame: %v", err)
 		}
 	})
-	mux.Handle("/frame.jpg", serveJPEG)
-	mux.Handle("/frame.jpeg", serveJPEG)
-	mux.HandleFunc("/frame.png", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Content-Type", "image/png")
-		if err := png.Encode(w, rawReader.Frame()); err != nil {
-			log.Printf("error encoding frame: %v", err)
-		}
-	})
-	mux.HandleFunc("/video.jpeg", func(w http.ResponseWriter, r *http.Request) {
+
+	serveMJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		boundary := "RASPIVID_mjpeg"
 		w.Header().Add("Content-Type", fmt.Sprintf("multipart/x-mixed-replace;boundary=%s", boundary))
 
@@ -720,6 +713,16 @@ func main() {
 		}
 		fmt.Fprintf(w, "\r\n--%s--\r\n", boundary)
 	})
+	mux.Handle("/frame.jpg", serveJPEG)
+	mux.Handle("/frame.jpeg", serveJPEG)
+	mux.HandleFunc("/frame.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "image/png")
+		if err := png.Encode(w, rawReader.Frame()); err != nil {
+			log.Printf("error encoding frame: %v", err)
+		}
+	})
+	mux.HandleFunc("/video.jpeg", serveMJPEG)
+	mux.HandleFunc("/video.jpg", serveMJPEG)
 	mux.HandleFunc("/frame.rgb", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/octet-stream")
 		rgb := rawReader.Frame()
