@@ -687,6 +687,7 @@ func main() {
 	mux := http.NewServeMux()
 	serveJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 		frame := rawReader.Frame()
 		log.Printf("frame size: %v", frame.Bounds())
 		if err := jpeg.Encode(w, frame, nil); err != nil {
@@ -694,29 +695,95 @@ func main() {
 		}
 	})
 
+	// serving MJPEG is CPU and network intensive.  We split the writing and reading/encoding
+	// into seperate gofuncs so we can encode the JPEGs while writing
 	serveMJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		boundary := "RASPIVID_mjpeg"
 		w.Header().Add("Content-Type", fmt.Sprintf("multipart/x-mixed-replace;boundary=%s", boundary))
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 
-		for {
-			frame, err := rawReader.WaitNextFrame()
-			if err != nil {
-				break
+		toWrite := make(chan []byte)
+		var wg sync.WaitGroup
+		lock := new(sync.Mutex)
+		writerDone := false
+		// wait for both the reader and writer
+		wg.Add(2)
+
+		// writer
+		go func() {
+			defer wg.Done()
+		Outer:
+			for {
+				b, ok := <-toWrite
+				if !ok {
+					break
+				}
+
+				// TODO: should we check the length here?
+				_, err := fmt.Fprintf(w, "\r\n--%s\r\nContent-Type: image/jpeg\r\n\r\n", boundary)
+				if err != nil {
+					break
+				}
+				// TODO: is this loop really necessary?
+				for n := 0; n < len(b); {
+					m, err := w.Write(b[n:])
+					if err != nil {
+						break Outer
+					}
+					n += m
+				}
 			}
 
-			fmt.Fprintf(w, "\r\n--%s\r\nContent-Type: image/jpeg\r\n\r\n", boundary)
+			// this will error if the writer is actually closed, but we don't care.
+			fmt.Fprintf(w, "\r\n--%s--\r\n", boundary)
 
-			if err := jpeg.Encode(w, frame, nil); err != nil {
-				log.Printf("error encoding frame: %v", err)
-				break
+			lock.Lock()
+			writerDone = true
+			lock.Unlock()
+		}()
+
+		// reader/encoder
+		go func() {
+			defer wg.Done()
+			for {
+				// wait to fetch the next frame
+				frame, err := rawReader.WaitNextFrame()
+				if err != nil {
+					break
+				}
+
+				// check to see if the writer thread has finished
+				isDone := false
+
+				lock.Lock()
+				isDone = writerDone
+				lock.Unlock()
+
+				if isDone {
+					break
+				}
+
+				// encode to a buffer
+				buf := new(bytes.Buffer)
+				if err := jpeg.Encode(buf, frame, nil); err != nil {
+					log.Printf("error encoding frame: %v", err)
+					break
+				}
+
+				toWrite <- buf.Bytes()
 			}
-		}
-		fmt.Fprintf(w, "\r\n--%s--\r\n", boundary)
+			close(toWrite)
+		}()
+
+		// wait for the reader and writer to finish
+		wg.Wait()
 	})
+
 	mux.Handle("/frame.jpg", serveJPEG)
 	mux.Handle("/frame.jpeg", serveJPEG)
 	mux.HandleFunc("/frame.png", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/png")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 		if err := png.Encode(w, rawReader.Frame()); err != nil {
 			log.Printf("error encoding frame: %v", err)
 		}
@@ -725,6 +792,7 @@ func main() {
 	mux.HandleFunc("/video.jpg", serveMJPEG)
 	mux.HandleFunc("/frame.rgb", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/octet-stream")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 		rgb := rawReader.Frame()
 		w.Header().Add("X-Image-Stride", fmt.Sprintf("%d", rgb.Stride))
 		w.Header().Add("X-Image-Rows", fmt.Sprintf("%d", rgb.Rect.Dy()))
@@ -739,11 +807,13 @@ func main() {
 	})
 	mux.HandleFunc("/motion.bin", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/octet-stream")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 		vectors := motionReader.MotionVectors()
 		binary.Write(w, binary.LittleEndian, vectors)
 	})
 	mux.HandleFunc("/config.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "\t")
