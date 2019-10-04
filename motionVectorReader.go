@@ -12,10 +12,10 @@ import (
 MotionVectorReader reads the raw motion vectors into a motionVector array
 */
 type MotionVectorReader struct {
-	MBX    int
-	MBY    int
+	MBX int
+	MBY int
 
-	atom int32
+	atom   int32
 	reader io.ReadCloser
 	buffer []MotionVector
 	lock   sync.Locker
@@ -33,27 +33,8 @@ type MotionVector struct {
 }
 
 /*
-NewMotionVectorReader creates a new motion vector reader and begins reading from the reader
-
-math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+Start begins reading motion vectors from the readers
 */
-// func NewMotionVectorReader(width int, height int, reader io.ReadCloser) *MotionVectorReader {
-// 	l := new(sync.Mutex)
-
-// 	ret := &MotionVectorReader{
-// 		Width:  width,
-// 		Height: height,
-// 		Mbx:    1 + (width+15)/16,
-// 		Mby:    1 + height/16,
-// 		reader: reader,
-// 		lock:   l,
-// 		ready:  sync.NewCond(l),
-// 		done:   false,
-// 	}
-// 	go ret.thread()
-// 	return ret
-// }
-
 func (m *MotionVectorReader) Start(reader io.ReadCloser) error {
 	oldatom := atomic.SwapInt32(&m.atom, 1)
 	if oldatom == 1 {
@@ -61,6 +42,7 @@ func (m *MotionVectorReader) Start(reader io.ReadCloser) error {
 	}
 
 	m.reader = reader
+	defer reader.Close()
 	m.lock = new(sync.Mutex)
 	m.ready = sync.NewCond(m.lock)
 

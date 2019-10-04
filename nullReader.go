@@ -14,6 +14,9 @@ type NullReader struct {
 	r    io.ReadCloser
 }
 
+/*
+Start begin reading (and doing nothing with) the data from reader
+*/
 func (dr *NullReader) Start(reader io.ReadCloser) (err error) {
 	old := atomic.SwapInt32(&dr.atom, 1)
 	if old == 1 {
@@ -21,6 +24,7 @@ func (dr *NullReader) Start(reader io.ReadCloser) (err error) {
 	}
 
 	dr.r = reader
+	defer reader.Close()
 
 	buf := make([]byte, defaultBufferSize)
 
