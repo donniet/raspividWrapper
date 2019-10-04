@@ -36,8 +36,8 @@ var (
 	width        = 1640
 	height       = 1232
 	bitrate      = 17000000
-	framerate    = 25
-	keyFrameRate = 12
+	framerate    = 30
+	keyFrameRate = framerate * 2
 	analogGain   = 4.0
 	digitalGain  = 1.0
 	refreshType  = "both"
@@ -187,8 +187,13 @@ func main() {
 	defer motionReader.Close()
 	defer rawReader.Close()
 
-	sock := newSocketServer()
-	sock.serve(videoPort)
+	sock := NewSocketServer()
+	go func() {
+		if err := sock.ServeTCP(videoPort); err != nil {
+			log.Printf("error serving TCP: %v", err)
+		}
+	}()
+	defer sock.Close()
 
 	go func() {
 		buf := make([]byte, defaultBufferSize)
@@ -221,47 +226,41 @@ func main() {
 
 		toWrite := make(chan []byte)
 		var wg sync.WaitGroup
-		lock := new(sync.Mutex)
-		writerDone := false
+		// this channel allows communication to the reader to stop if the writer fails
+		isDone := make(chan bool)
 		// wait for both the reader and writer
 		wg.Add(2)
 
 		// writer
 		go func() {
 			defer wg.Done()
-		Outer:
 			for {
 				b, ok := <-toWrite
 				if !ok {
 					break
 				}
 
-				// TODO: should we check the length here?
 				_, err := fmt.Fprintf(w, "\r\n--%s\r\nContent-Type: image/jpeg\r\n\r\n", boundary)
 				if err != nil {
 					break
 				}
-				// TODO: is this loop really necessary?
-				for n := 0; n < len(b); {
-					m, err := w.Write(b[n:])
-					if err != nil {
-						break Outer
-					}
-					n += m
+
+				// Writer must return a non-nil error if the bytes written is less than the len(b)
+				if _, err := w.Write(b); err != nil {
+					break
 				}
 			}
 
 			// this will error if the writer is actually closed, but we don't care.
 			fmt.Fprintf(w, "\r\n--%s--\r\n", boundary)
 
-			lock.Lock()
-			writerDone = true
-			lock.Unlock()
+			close(isDone)
 		}()
 
 		// reader/encoder
 		go func() {
 			defer wg.Done()
+		Outer:
 			for {
 				// wait to fetch the next frame
 				frame, err := rawReader.WaitNextFrame()
@@ -269,15 +268,12 @@ func main() {
 					break
 				}
 
-				// check to see if the writer thread has finished
-				isDone := false
-
-				lock.Lock()
-				isDone = writerDone
-				lock.Unlock()
-
-				if isDone {
-					break
+				// if the isDone channel is closed we will break from the outer loop,
+				// otherwise continue
+				select {
+				case <-isDone:
+					break Outer
+				default:
 				}
 
 				// encode to a buffer
@@ -292,7 +288,7 @@ func main() {
 			close(toWrite)
 		}()
 
-		// wait for the reader and writer to finish
+		// wait for the reader and writer to finish before returning from the handlerfunc
 		wg.Wait()
 	})
 
@@ -383,9 +379,7 @@ func main() {
 
 	select {
 	case <-interrupted:
-		break
 	case <-processEnded:
-		break
 	}
 
 	fmt.Println("Closing")
