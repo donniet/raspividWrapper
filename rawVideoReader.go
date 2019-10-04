@@ -5,16 +5,18 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 )
 
 /*
 RawVideoReader is a buffer for the RGB24 video bytes
 */
 type RawVideoReader struct {
-	stride int
-	cols   int
-	rows   int
+	Stride int
+	Cols   int
+	Rows   int
 
+	atom   int32
 	frame  []byte
 	reader io.ReadCloser
 	lock   sync.Locker
@@ -23,27 +25,13 @@ type RawVideoReader struct {
 }
 
 /*
-NewRawVideoReader creates a new reader from the stride, cols and rows and a ReadCloser and starts reading data in a gofunc
-*/
-func NewRawVideoReader(stride int, cols int, rows int, reader io.ReadCloser) *RawVideoReader {
-	l := new(sync.Mutex)
-	ret := &RawVideoReader{
-		stride: stride,
-		cols:   cols,
-		rows:   rows,
-		reader: reader,
-		lock:   l,
-		ready:  sync.NewCond(l),
-		done:   false,
-	}
-	go ret.readThread()
-	return ret
-}
-
-/*
 Done returns true if the reader has been closed
 */
 func (rr *RawVideoReader) Done() bool {
+	if rr.lock == nil {
+		return true
+	}
+
 	rr.lock.Lock()
 	defer rr.lock.Unlock()
 
@@ -53,20 +41,37 @@ func (rr *RawVideoReader) Done() bool {
 /*
 Close stops the thread and closes the wrapped ReadCloser
 */
-func (rr *RawVideoReader) Close() {
-	rr.reader.Close()
+func (rr *RawVideoReader) Close() error {
+	if rr.reader == nil {
+		return fmt.Errorf("no reader to close")
+	}
+	return rr.reader.Close()
 }
 
-func (rr *RawVideoReader) readThread() {
-	bufsize := rr.stride * rr.rows
+/*
+Start function begins reading from enclosed reader
+*/
+func (rr *RawVideoReader) Start(reader io.ReadCloser) error {
+	oldatom := atomic.SwapInt32(&rr.atom, 1)
+	if oldatom == 1 {
+		return fmt.Errorf("already started")
+	}
+
+	rr.reader = reader
+	rr.lock = new(sync.Mutex)
+	rr.ready = sync.NewCond(rr.lock)
+
+	bufsize := rr.Stride * rr.Rows
 	// double buffer
 	buf := make([]byte, 2*bufsize)
 
 	log.Printf("rawvideo bufsize: %d", bufsize)
 
+	var err error
+
 	i := 0
 	for {
-		_, err := io.ReadFull(rr.reader, buf[i*bufsize:(i+1)*bufsize])
+		_, err = io.ReadFull(rr.reader, buf[i*bufsize:(i+1)*bufsize])
 
 		if err != nil {
 			break
@@ -86,6 +91,11 @@ func (rr *RawVideoReader) readThread() {
 	rr.lock.Unlock()
 
 	rr.ready.Broadcast()
+
+	// I think we can just reset the atom to put everything back to where it was before the start
+	// any wayting threads should end on the condition broadcast with done == true
+	atomic.SwapInt32(&rr.atom, 0)
+	return err
 }
 
 /*
@@ -107,7 +117,7 @@ func (rr *RawVideoReader) WaitNextFrame() (*RGB24, error) {
 	f := make([]byte, len(rr.frame))
 	copy(f, rr.frame)
 
-	return FromRaw(f, rr.stride, rr.cols, rr.rows), nil
+	return FromRaw(f, rr.Stride, rr.Cols, rr.Rows), nil
 }
 
 /*
@@ -126,5 +136,5 @@ func (rr *RawVideoReader) Frame() *RGB24 {
 	f := make([]byte, len(rr.frame))
 	copy(f, rr.frame)
 
-	return FromRaw(f, rr.stride, rr.cols, rr.rows)
+	return FromRaw(f, rr.Stride, rr.Cols, rr.Rows)
 }

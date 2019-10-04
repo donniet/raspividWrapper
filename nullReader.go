@@ -1,40 +1,47 @@
 package main
 
 import (
+	"fmt"
 	"io"
+	"sync/atomic"
 )
 
 /*
 NullReader reads and throws away the data from the wrapped reader
 */
 type NullReader struct {
-	r io.ReadCloser
+	atom int32
+	r    io.ReadCloser
 }
 
-func (dr *NullReader) readThread() {
+func (dr *NullReader) Start(reader io.ReadCloser) (err error) {
+	old := atomic.SwapInt32(&dr.atom, 1)
+	if old == 1 {
+		return fmt.Errorf("Start already called")
+	}
+
+	dr.r = reader
+
 	buf := make([]byte, defaultBufferSize)
 
 	for {
-		_, err := dr.r.Read(buf)
+		_, err = dr.r.Read(buf)
 
 		if err != nil {
 			break
 		}
 	}
+
+	atomic.SwapInt32(&dr.atom, 0)
+	return
 }
 
 /*
 Close closes the wrapped reader
 */
-func (dr *NullReader) Close() {
-	dr.r.Close()
-}
-
-/*
-NewNullReader creates a NullReader which wrapps the passed ReadCloser
-*/
-func NewNullReader(r io.ReadCloser) (ret *NullReader) {
-	ret = &NullReader{r}
-	go ret.readThread()
-	return
+func (dr *NullReader) Close() error {
+	if dr.r == nil {
+		return fmt.Errorf("not started")
+	}
+	return dr.r.Close()
 }

@@ -177,16 +177,36 @@ func main() {
 	}
 
 	log.Printf("starting readers")
-	motionReader := NewMotionVectorReader(width, height, motionPipe)
+	// math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+	motionReader := &MotionVectorReader{
+		MBX: 1 + (width+15)/16,
+		MBY: 1 + height/16,
+	}
+	go func() {
+		if err := motionReader.Start(motionPipe); err != nil {
+			log.Printf("motionReader start error: %v", err)
+		}
+	}()
+	defer motionReader.Close()
+
+	// starting the raw reader
 	stride := 3 * width
 	if r := stride % 16; r != 0 {
 		stride += 3 * r
 	}
-	rawReader := NewRawVideoReader(stride, width, height, rawPipe)
-
-	defer motionReader.Close()
+	rawReader := &RawVideoReader{
+		Stride: stride,
+		Cols:   width,
+		Rows:   height,
+	}
+	go func() {
+		if err := rawReader.Start(rawPipe); err != nil {
+			log.Printf("rawReader Start error: %v", err)
+		}
+	}()
 	defer rawReader.Close()
 
+	// starting the socket server
 	sock := NewSocketServer()
 	go func() {
 		if err := sock.ServeTCP(videoPort); err != nil {
@@ -195,6 +215,8 @@ func main() {
 	}()
 	defer sock.Close()
 
+	// write directly from the video pipe to all listening sockets
+	// TODO: should we attempt to parse the h264 stream at all?
 	go func() {
 		buf := make([]byte, defaultBufferSize)
 		for {
@@ -206,6 +228,7 @@ func main() {
 		}
 	}()
 
+	// create an HTTP server for frames and metadata
 	mux := http.NewServeMux()
 	serveJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
@@ -343,8 +366,8 @@ func main() {
 			"refreshType":  refreshType,
 			"h264Level":    h264Level,
 			"h264Profile":  h264Profile,
-			"mbx":          motionReader.Mbx,
-			"mby":          motionReader.Mby,
+			"mbx":          motionReader.MBX,
+			"mby":          motionReader.MBY,
 		})
 	})
 	server := &http.Server{
@@ -358,6 +381,7 @@ func main() {
 		}
 	}()
 
+	// start a GRPC server for frames and metadata to avoid overhead of HTTP
 	grpcServer := &VideoServerGRPC{
 		MotionReader: motionReader,
 		VideoReader:  rawReader,
@@ -377,6 +401,8 @@ func main() {
 	}()
 	defer s.GracefulStop()
 
+	// wait for either our process to be interrupted, or the wrapped process to end.
+	// TODO: what other conditions should cause this process to fail?
 	select {
 	case <-interrupted:
 	case <-processEnded:
