@@ -127,23 +127,23 @@ func (p *RGB24) SubImage(r image.Rectangle) image.Image {
 	}
 	// TODO: implement this much faster sub image routine, but this requires image stride
 	//   in the C code.  right now just copy the image bytes to a new slice
-	// i := p.PixOffset(r.Min.X, r.Min.Y)
-	// return &RGB24{
-	// 	Pix:    p.Pix[i:],
-	// 	Stride: p.Stride,
-	// 	Rect:   r,
+	i := p.PixOffset(r.Min.X, r.Min.Y)
+	return &RGB24{
+		Pix:    p.Pix[i:],
+		Stride: p.Stride,
+		Rect:   r,
+	}
+	// ret := &RGB24{
+	// 	Stride: r.Dx() * 3,
+	// 	Rect:   image.Rect(0, 0, r.Dx(), r.Dy()),
 	// }
-	ret := &RGB24{
-		Stride: r.Dx() * 3,
-		Rect:   image.Rect(0, 0, r.Dx(), r.Dy()),
-	}
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
-			i := p.PixOffset(x, y)
-			ret.Pix = append(ret.Pix, p.Pix[i], p.Pix[i+1], p.Pix[i+2])
-		}
-	}
-	return ret
+	// for y := r.Min.Y; y < r.Max.Y; y++ {
+	// 	for x := r.Min.X; x < r.Max.X; x++ {
+	// 		i := p.PixOffset(x, y)
+	// 		ret.Pix = append(ret.Pix, p.Pix[i], p.Pix[i+1], p.Pix[i+2])
+	// 	}
+	// }
+	// return ret
 }
 
 // PixOffset returns the index of the first element of Pix that corresponds to
