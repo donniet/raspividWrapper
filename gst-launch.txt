@@ -1,0 +1,5 @@
+gst-launch-1.0 -vvv tcpclientsrc host=mirror.local port=3000 ! h264parse ! avdec_h264 ! xvimagesink
+
+ffmpeg -i tcp://mirror.local:3000 -vcodec copy -f segment -segment_time 1800 -strftime 1 "%Y-%m-%d_%H-%M-%S.mp4"
+
+ffmpeg -i rtsp://zoneminder:lovely42@192.168.1.231:88/videoMain -vcodec copy -f segment -segment_time 1800 -strftime 1 "%Y-%m-%d_%H-%M-%S.mkv"

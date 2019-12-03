@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/donniet/raspividWrapper/videoService"
 	"google.golang.org/grpc"
@@ -36,8 +37,8 @@ var (
 	width        = 1640
 	height       = 1232
 	bitrate      = 17000000
-	framerate    = 25
-	keyFrameRate = 12
+	framerate    = 30
+	keyFrameRate = framerate * 2
 	analogGain   = 4.0
 	digitalGain  = 1.0
 	refreshType  = "both"
@@ -177,19 +178,46 @@ func main() {
 	}
 
 	log.Printf("starting readers")
-	motionReader := NewMotionVectorReader(width, height, motionPipe)
+	// math taken from here https://github.com/billw2/pikrellcam/blob/master/src/motion.c#L1634
+	motionReader := &MotionVectorReader{
+		MBX: 1 + (width+15)/16,
+		MBY: 1 + height/16,
+	}
+	go func() {
+		if err := motionReader.Start(motionPipe); err != nil {
+			log.Printf("motionReader start error: %v", err)
+		}
+	}()
+	defer motionReader.Close()
+
+	// starting the raw reader
 	stride := 3 * width
 	if r := stride % 16; r != 0 {
 		stride += 3 * r
 	}
-	rawReader := NewRawVideoReader(stride, width, height, rawPipe)
-
-	defer motionReader.Close()
+	rawReader := &RawVideoReader{
+		Stride: stride,
+		Cols:   width,
+		Rows:   height,
+	}
+	go func() {
+		if err := rawReader.Start(rawPipe); err != nil {
+			log.Printf("rawReader Start error: %v", err)
+		}
+	}()
 	defer rawReader.Close()
 
-	sock := newSocketServer()
-	sock.serve(videoPort)
+	// starting the socket server
+	sock := NewSocketServer()
+	go func() {
+		if err := sock.ServeTCP(videoPort); err != nil {
+			log.Printf("error serving TCP: %v", err)
+		}
+	}()
+	defer sock.Close()
 
+	// write directly from the video pipe to all listening sockets
+	// TODO: should we attempt to parse the h264 stream at all?
 	go func() {
 		buf := make([]byte, defaultBufferSize)
 		for {
@@ -201,12 +229,13 @@ func main() {
 		}
 	}()
 
+	// create an HTTP server for frames and metadata
 	mux := http.NewServeMux()
 	serveJPEG := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "image/jpeg")
 		w.Header().Add("Access-Control-Allow-Origin", "*")
 		frame := rawReader.Frame()
-		log.Printf("frame size: %v", frame.Bounds())
+		// log.Printf("frame size: %v", frame.Bounds())
 		if err := jpeg.Encode(w, frame, nil); err != nil {
 			log.Printf("error encoding frame: %v", err)
 		}
@@ -221,47 +250,41 @@ func main() {
 
 		toWrite := make(chan []byte)
 		var wg sync.WaitGroup
-		lock := new(sync.Mutex)
-		writerDone := false
+		// this channel allows communication to the reader to stop if the writer fails
+		isDone := make(chan bool)
 		// wait for both the reader and writer
 		wg.Add(2)
 
 		// writer
 		go func() {
 			defer wg.Done()
-		Outer:
 			for {
 				b, ok := <-toWrite
 				if !ok {
 					break
 				}
 
-				// TODO: should we check the length here?
 				_, err := fmt.Fprintf(w, "\r\n--%s\r\nContent-Type: image/jpeg\r\n\r\n", boundary)
 				if err != nil {
 					break
 				}
-				// TODO: is this loop really necessary?
-				for n := 0; n < len(b); {
-					m, err := w.Write(b[n:])
-					if err != nil {
-						break Outer
-					}
-					n += m
+
+				// Writer must return a non-nil error if the bytes written is less than the len(b)
+				if _, err := w.Write(b); err != nil {
+					break
 				}
 			}
 
 			// this will error if the writer is actually closed, but we don't care.
 			fmt.Fprintf(w, "\r\n--%s--\r\n", boundary)
 
-			lock.Lock()
-			writerDone = true
-			lock.Unlock()
+			close(isDone)
 		}()
 
 		// reader/encoder
 		go func() {
 			defer wg.Done()
+		Outer:
 			for {
 				// wait to fetch the next frame
 				frame, err := rawReader.WaitNextFrame()
@@ -269,15 +292,12 @@ func main() {
 					break
 				}
 
-				// check to see if the writer thread has finished
-				isDone := false
-
-				lock.Lock()
-				isDone = writerDone
-				lock.Unlock()
-
-				if isDone {
-					break
+				// if the isDone channel is closed we will break from the outer loop,
+				// otherwise continue
+				select {
+				case <-isDone:
+					break Outer
+				default:
 				}
 
 				// encode to a buffer
@@ -286,13 +306,15 @@ func main() {
 					log.Printf("error encoding frame: %v", err)
 					break
 				}
+				// slow down the framerate
+				time.Sleep(60 * time.Millisecond)
 
 				toWrite <- buf.Bytes()
 			}
 			close(toWrite)
 		}()
 
-		// wait for the reader and writer to finish
+		// wait for the reader and writer to finish before returning from the handlerfunc
 		wg.Wait()
 	})
 
@@ -347,8 +369,8 @@ func main() {
 			"refreshType":  refreshType,
 			"h264Level":    h264Level,
 			"h264Profile":  h264Profile,
-			"mbx":          motionReader.Mbx,
-			"mby":          motionReader.Mby,
+			"mbx":          motionReader.MBX,
+			"mby":          motionReader.MBY,
 		})
 	})
 	server := &http.Server{
@@ -362,6 +384,7 @@ func main() {
 		}
 	}()
 
+	// start a GRPC server for frames and metadata to avoid overhead of HTTP
 	grpcServer := &VideoServerGRPC{
 		MotionReader: motionReader,
 		VideoReader:  rawReader,
@@ -381,11 +404,11 @@ func main() {
 	}()
 	defer s.GracefulStop()
 
+	// wait for either our process to be interrupted, or the wrapped process to end.
+	// TODO: what other conditions should cause this process to fail?
 	select {
 	case <-interrupted:
-		break
 	case <-processEnded:
-		break
 	}
 
 	fmt.Println("Closing")
