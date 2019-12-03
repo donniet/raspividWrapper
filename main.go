@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/donniet/raspividWrapper/videoService"
 	"google.golang.org/grpc"
@@ -234,7 +235,7 @@ func main() {
 		w.Header().Add("Content-Type", "image/jpeg")
 		w.Header().Add("Access-Control-Allow-Origin", "*")
 		frame := rawReader.Frame()
-		log.Printf("frame size: %v", frame.Bounds())
+		// log.Printf("frame size: %v", frame.Bounds())
 		if err := jpeg.Encode(w, frame, nil); err != nil {
 			log.Printf("error encoding frame: %v", err)
 		}
@@ -305,6 +306,8 @@ func main() {
 					log.Printf("error encoding frame: %v", err)
 					break
 				}
+				// slow down the framerate
+				time.Sleep(60 * time.Millisecond)
 
 				toWrite <- buf.Bytes()
 			}

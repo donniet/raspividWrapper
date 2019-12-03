@@ -131,7 +131,7 @@ func (rr *RawVideoReader) Frame() *RGB24 {
 		return nil
 	}
 
-	log.Printf("length of frame: %d", len(rr.frame))
+	// log.Printf("length of frame: %d", len(rr.frame))
 
 	f := make([]byte, len(rr.frame))
 	copy(f, rr.frame)
