@@ -302,6 +302,8 @@ func main() {
 
 				// encode to a buffer
 				buf := new(bytes.Buffer)
+
+				// TODO: use hardware accelerated JPEG encoding on raspberry pi
 				if err := jpeg.Encode(buf, frame, nil); err != nil {
 					log.Printf("error encoding frame: %v", err)
 					break
